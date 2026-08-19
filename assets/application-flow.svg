@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="180" viewBox="0 0 900 180" role="img" aria-label="Application flow">
+ <defs><marker id="a" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#315efb"/></marker></defs>
+ <g font-family="Arial" font-size="15" text-anchor="middle"><g fill="#eef3ff" stroke="#315efb" stroke-width="2"><rect x="20" y="55" width="150" height="70" rx="9"/><rect x="205" y="55" width="150" height="70" rx="9"/><rect x="390" y="55" width="150" height="70" rx="9"/><rect x="575" y="55" width="150" height="70" rx="9"/><rect x="760" y="55" width="120" height="70" rx="9"/></g>
+ <text x="95" y="84">Outlook / Teams</text><text x="95" y="106">ServiceNow</text><text x="280" y="95">Normalize + Store</text><text x="465" y="95">Hybrid Retrieval</text><text x="650" y="95">Grounded Answer</text><text x="820" y="95">Dashboard</text>
+ <g stroke="#315efb" stroke-width="2" marker-end="url(#a)"><line x1="170" y1="90" x2="200" y2="90"/><line x1="355" y1="90" x2="385" y2="90"/><line x1="540" y1="90" x2="570" y2="90"/><line x1="725" y1="90" x2="755" y2="90"/></g></g>
+</svg>

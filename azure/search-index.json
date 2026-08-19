@@ -1,0 +1,25 @@
+{
+  "name": "enterprise-knowledge",
+  "fields": [
+    {"name":"id","type":"Edm.String","key":true,"filterable":true},
+    {"name":"source","type":"Edm.String","filterable":true,"facetable":true},
+    {"name":"source_id","type":"Edm.String","filterable":true},
+    {"name":"title","type":"Edm.String","searchable":true},
+    {"name":"content","type":"Edm.String","searchable":true},
+    {"name":"created_at","type":"Edm.String","filterable":true,"sortable":true},
+    {"name":"updated_at","type":"Edm.String","filterable":true,"sortable":true},
+    {"name":"url","type":"Edm.String"},
+    {"name":"record_type","type":"Edm.String","filterable":true,"facetable":true},
+    {"name":"status","type":"Edm.String","filterable":true,"facetable":true},
+    {"name":"priority","type":"Edm.String","filterable":true,"facetable":true},
+    {"name":"owner","type":"Edm.String","filterable":true},
+    {"name":"classification","type":"Edm.String","filterable":true},
+    {"name":"allowed_groups","type":"Collection(Edm.String)","filterable":true},
+    {"name":"metadata","type":"Edm.String"},
+    {"name":"content_vector","type":"Collection(Edm.Single)","searchable":true,"dimensions":1536,"vectorSearchProfile":"default-profile"}
+  ],
+  "vectorSearch": {
+    "algorithms": [{"name":"hnsw-default","kind":"hnsw","hnswParameters":{"metric":"cosine","m":4,"efConstruction":400,"efSearch":500}}],
+    "profiles": [{"name":"default-profile","algorithm":"hnsw-default"}]
+  }
+}
