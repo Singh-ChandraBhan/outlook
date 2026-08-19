@@ -200,19 +200,58 @@ def outlook_desktop_calendar(settings: Settings) -> list[KnowledgeRecord]:
     recipient.Resolve()
     if not recipient.Resolved:
         raise RuntimeError("OUTLOOK_DESKTOP_MAILBOX could not be resolved")
-    folder = namespace.GetSharedDefaultFolder(recipient, 9)
+    mailbox = settings.outlook_desktop_mailbox.casefold()
+    signed_in = {
+        str(account.SmtpAddress).casefold()
+        for account in namespace.Accounts
+        if getattr(account, "SmtpAddress", None)
+    }
+    # GetSharedDefaultFolder can fail for the user's own mailbox. Outlook's
+    # default folder API is the correct path for the signed-in account.
+    folder = (
+        namespace.GetDefaultFolder(9)
+        if mailbox in signed_in
+        else namespace.GetSharedDefaultFolder(recipient, 9)
+    )
+    items = folder.Items
+    items.Sort("[Start]")
+    items.IncludeRecurrences = True
+    now = datetime.now().astimezone().replace(tzinfo=None)
+    window_start = now - timedelta(days=settings.calendar_days_past)
+    window_end = now + timedelta(days=settings.calendar_days_future)
     records = []
-    for item in list(folder.Items):
+    for item in items:
         source_id = getattr(item, "EntryID", "")
-        if source_id:
+        start = getattr(item, "Start", None)
+        start_value = start.replace(tzinfo=None) if start else None
+        if source_id and start_value and window_start <= start_value <= window_end:
+            organizer = str(getattr(item, "Organizer", "") or "")
+            location = str(getattr(item, "Location", "") or "")
+            required = str(getattr(item, "RequiredAttendees", "") or "")
+            optional = str(getattr(item, "OptionalAttendees", "") or "")
+            join_url = str(getattr(item, "NetMeetingUrl", "") or "")
             records.append(
                 KnowledgeRecord.create(
                     "outlook-desktop",
                     source_id,
-                    item.Subject,
-                    item.Body or "",
+                    str(getattr(item, "Subject", "") or "(no subject)"),
+                    str(getattr(item, "Body", "") or ""),
                     record_type="calendar",
-                    metadata={"start": str(item.Start), "end": str(item.End)},
+                    status=str(getattr(item, "MeetingStatus", "") or ""),
+                    owner=organizer,
+                    metadata={
+                        "start": str(start),
+                        "end": str(getattr(item, "End", "") or ""),
+                        "organizer": organizer,
+                        "location": location,
+                        "attendees": [
+                            x.strip() for x in required.split(";") if x.strip()
+                        ],
+                        "optional_attendees": [
+                            x.strip() for x in optional.split(";") if x.strip()
+                        ],
+                        "join_url": join_url,
+                    },
                 )
             )
     return records
