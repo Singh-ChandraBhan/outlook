@@ -1,109 +1,444 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
-import tempfile
+
+import pandas as pd
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from enterprise_assistant.analytics import export_powerbi
+from enterprise_assistant import __file__ as package_file
 from enterprise_assistant.config import Settings
-from enterprise_assistant.connectors import incidents_from_xlsx, outlook_desktop_calendar
-from enterprise_assistant.notifications import critical_incidents, notify_local
-from enterprise_assistant.service import EnterpriseAssistant
+from enterprise_assistant.connectors import (
+    ExcelIncidentConnector,
+    OutlookDesktopConnector,
+)
+from enterprise_assistant.service import KnowledgeAssistant
 
-CSS = """
-<style>
-:root{--navy:#0a2148;--blue:#075bea;--blue-dark:#0649bb;--red:#ef3f4a;--line:#dce4ef;--muted:#64748b;--surface:#f7f9fc}
-html,body,[class*="css"],.stApp,button,input,textarea,select{font-family:"Segoe UI",Inter,Arial,sans-serif!important}
-.stApp{color:var(--navy);background:linear-gradient(180deg,#fff 0%,#fbfcff 100%);font-size:14px}
-.block-container{max-width:1500px;padding-top:2.4rem;padding-bottom:4rem}h1,h2,h3{color:var(--navy)!important;letter-spacing:-.025em;font-weight:750!important}p,li{line-height:1.65}
-[data-testid="stSidebar"]{background:linear-gradient(180deg,#f4f7fb 0%,#edf2f8 100%);border-right:1px solid var(--line)}
-[data-testid="stSidebar"] .block-container{padding:2rem 1.35rem}[data-testid="stSidebar"] h3{font-size:15px!important;margin-bottom:8px}[data-testid="stSidebar"] label{font-size:12px!important;font-weight:650;color:#34445e}
-[data-testid="stSidebar"] [data-testid="stAlert"]{border-radius:10px;border:1px solid #cbdcff;background:#eaf2ff;color:#164a9b}
-.brand-row{display:grid;grid-template-columns:220px 1fr;align-items:center;margin-bottom:22px;padding:2px 0 8px}.brand{color:#0763e7;font-size:31px;font-weight:800;letter-spacing:-1.5px}.brand-title{font-size:31px;font-weight:800;letter-spacing:-.6px}.subtitle{color:#8793a6;font-size:12px;font-weight:500;margin-top:6px;letter-spacing:.02em}
-.panel{background:rgba(255,255,255,.95);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:12px 0;box-shadow:0 2px 8px rgba(20,48,90,.035)}.panel h3{margin:0 0 11px;font-size:19px}.details-grid{display:grid;grid-template-columns:1fr 1fr;gap:45px;font-size:12.5px}.details-grid ul{margin:6px 0 0;padding-left:18px;line-height:1.9}
-.flow{background:linear-gradient(135deg,#f8fbff,#f1f6ff);border:1.5px solid #cfe0ff;border-radius:26px;padding:42px 28px;display:flex;align-items:center;justify-content:space-between;gap:10px}.flow-card{background:#fff;border:1.5px solid #91b8ff;border-radius:18px;padding:26px 14px;text-align:center;width:18%;min-height:148px;box-shadow:0 10px 24px rgba(38,78,150,.11);transition:transform .2s ease,box-shadow .2s ease}.flow-card:hover{transform:translateY(-4px);box-shadow:0 15px 30px rgba(38,78,150,.16)}.flow-step{color:var(--blue);font-weight:800;font-size:17px;letter-spacing:.02em}.flow-title{font-weight:780;font-size:20px;margin:16px 0}.flow-copy{color:#536786;font-size:15px;line-height:1.55}.arrow{color:#3766df;font-size:40px;font-weight:600}
-div[data-testid="stMetric"]{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px!important;box-shadow:0 3px 10px rgba(20,48,90,.04)}div[data-testid="stMetricLabel"]{color:var(--muted);font-size:12px;font-weight:650}div[data-testid="stMetricValue"]{color:var(--navy);font-size:25px;font-weight:750}
-.stButton>button,.stDownloadButton>button{min-height:40px;border-radius:8px!important;padding:.55rem 1rem!important;font-size:13px!important;font-weight:700!important;letter-spacing:.01em;border:1px solid #c9d4e3;background:#fff;color:#17335e;box-shadow:0 1px 2px rgba(15,38,75,.05);transition:all .18s ease}
-.stButton>button:hover,.stDownloadButton>button:hover{border-color:var(--blue);color:var(--blue);background:#f3f7ff;box-shadow:0 5px 14px rgba(7,91,234,.13);transform:translateY(-1px)}
-.stButton>button:focus-visible,.stDownloadButton>button:focus-visible{outline:3px solid rgba(7,91,234,.2);outline-offset:2px}
-.stButton>button[kind="primary"]{color:#fff;background:linear-gradient(135deg,#f34b55,#e72f3b);border-color:#e72f3b;box-shadow:0 4px 12px rgba(239,63,74,.2)}.stButton>button[kind="primary"]:hover{color:#fff;background:linear-gradient(135deg,#e93b46,#d92531);border-color:#d92531;box-shadow:0 7px 18px rgba(239,63,74,.28)}
-.stButton>button:disabled{opacity:.48;box-shadow:none;transform:none}
-[data-baseweb="input"]>div,[data-baseweb="textarea"]>div,[data-baseweb="select"]>div,.stTextInput input,.stTextArea textarea{border-radius:8px!important;border-color:#cfd9e7!important;background:#f8faff!important;font-size:13px!important}.stTextInput input:focus,.stTextArea textarea:focus{border-color:var(--blue)!important;box-shadow:0 0 0 3px rgba(7,91,234,.12)!important}
-.stTabs [data-baseweb="tab-list"]{gap:26px;border-bottom:1px solid var(--line);margin-top:10px}.stTabs [data-baseweb="tab"]{padding:14px 1px 11px;font-size:12.5px;font-weight:650;color:#5d6b80}.stTabs [aria-selected="true"]{color:var(--red)!important;font-weight:750}.stTabs [data-baseweb="tab-highlight"]{background-color:var(--red)!important;height:3px}
-[data-testid="stDataFrame"]{border:1px solid var(--line);border-radius:10px;overflow:hidden}.small-note{font-size:11px;color:#8b95a7;margin-top:8px}
-@media(max-width:900px){.block-container{padding-top:1.25rem}.brand-row{grid-template-columns:1fr;gap:8px}.brand-title{font-size:25px}.flow{overflow-x:auto;padding:28px 20px}.flow-card{min-width:190px}.details-grid{grid-template-columns:1fr}.arrow{font-size:28px}}
-</style>"""
+# Running a Streamlit file with plain Python normally produces repeated
+# "missing ScriptRunContext" warnings. Make that common IDE/terminal action
+# behave as expected by replacing it with the Streamlit server command.
+if __name__ == "__main__" and get_script_run_ctx(suppress_warning=True) is None:
+    app_path = Path(package_file).resolve().parents[2] / "streamlit_app.py"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(app_path),
+            "--server.headless=true",
+        ],
+        check=False,
+    )
+    raise SystemExit(completed.returncode)
 
 
-def _flow_html() -> str:
-    steps = [("1 · SOURCES","Enterprise data","Outlook · Teams<br>ServiceNow · Excel"),("2 · COLLECT","Secure ingestion","Read approved<br>operational records"),("3 · NORMALIZE","Knowledge records","Clean · classify<br>index · access control"),("4 · ANALYZE","Ask Assistant","Search and grounded<br>answers with sources"),("5 · ACT","Operational action","Alerts · Meetings<br>Power BI insights")]
-    cards=[]
-    for i,(step,title,copy) in enumerate(steps):
-        if i: cards.append('<div class="arrow">→</div>')
-        cards.append(f'<div class="flow-card"><div class="flow-step">{step}</div><div class="flow-title">{title}</div><div class="flow-copy">{copy}</div></div>')
-    return '<div class="flow">'+''.join(cards)+'</div>'
+st.set_page_config(
+    page_title="Enterprise Knowledge Assistant",
+    page_icon="🔎",
+    layout="wide",
+)
+
+APP_ROOT = Path(__file__).resolve().parent
+HCLTECH_LOGO = APP_ROOT / "assets" / "hcltech-logo.svg"
+APPLICATION_FLOW = APP_ROOT / "assets" / "application-flow.svg"
+SAMPLE_INCIDENT_WORKBOOK = APP_ROOT / "data" / "incident.xlsx"
+OUTLOOK_MAILBOX = os.getenv("OUTLOOK_DESKTOP_MAILBOX", "")
+OUTLOOK_DATA_VERSION = "outlook-only-v1"
 
 
-def _sidebar(settings: Settings, service: EnterpriseAssistant) -> None:
-    st.sidebar.subheader("Demo controls")
-    st.sidebar.info(f"Mode: **{settings.app_mode.upper()}**")
-    st.sidebar.caption("Collect approved records from configured enterprise sources.")
-    if st.sidebar.button("Collect and index data", type="primary", width="stretch"):
-        with st.spinner("Collecting and normalizing records..."):
-            count=len(service.ingest(include_demo=settings.app_mode=="local"))
-        st.sidebar.success(f"Indexed {count} records"); st.rerun()
-    st.sidebar.divider(); st.sidebar.subheader("Import incident data")
-    upload=st.sidebar.file_uploader("Incident workbook",type=["xlsx"])
-    limit=st.sidebar.selectbox("Incidents to import",[20,50,100])
-    groups=st.sidebar.text_input("Access groups","employees,engineering")
-    if st.sidebar.button("Import Excel incidents",width="stretch",disabled=upload is None):
-        with tempfile.NamedTemporaryFile(suffix=".xlsx",delete=False) as handle:
-            handle.write(upload.getbuffer()); temp_path=handle.name
-        records=incidents_from_xlsx(temp_path)[:limit]; allowed=[x.strip() for x in groups.split(",") if x.strip()]
-        for record in records: record.allowed_groups=allowed; service.storage.upsert(record)
-        service.search.upsert(records); Path(temp_path).unlink(missing_ok=True)
-        st.sidebar.success(f"Imported {len(records)} incidents"); st.rerun()
-    st.sidebar.divider(); st.sidebar.subheader("HCLTech Outlook"); st.sidebar.caption("Mailbox")
-    st.sidebar.code(settings.outlook_desktop_mailbox or "Not configured",language=None)
-    if st.sidebar.button("Fetch Outlook meetings",width="stretch",disabled=not settings.outlook_desktop_mailbox):
-        meetings=outlook_desktop_calendar(settings)
-        for record in meetings: service.storage.upsert(record)
-        service.search.upsert(meetings); st.sidebar.success(f"Fetched {len(meetings)} meetings"); st.rerun()
+@st.cache_resource
+def create_service() -> KnowledgeAssistant:
+    return KnowledgeAssistant(Settings.from_env())
 
 
-def render_app() -> None:
-    st.set_page_config(page_title="Enterprise Knowledge Assistant",page_icon="🔎",layout="wide")
-    st.markdown(CSS,unsafe_allow_html=True)
-    settings=Settings.from_env(); service=EnterpriseAssistant(settings); _sidebar(settings,service)
-    st.markdown('<div class="brand-row"><div class="brand">HCLTech</div><div><div class="brand-title">Enterprise Knowledge Assistant</div><div class="subtitle">Outlook · Microsoft Teams · ServiceNow · Azure AI · Power BI</div></div></div>',unsafe_allow_html=True)
-    st.markdown('<div class="panel"><h3>Project details</h3><div style="font-size:12px">This application collects approved information from <b>Outlook, Microsoft Teams, and ServiceNow</b> and brings it into one searchable dashboard. It helps users:</div><div class="details-grid"><ul><li>Ask questions and receive answers supported by source records</li><li>View Outlook meetings and schedules</li><li>Search and inspect normalized enterprise records</li></ul><ul><li>Identify critical incidents and SLA risks</li><li>Create operational notifications</li><li>Export analytics data for Power BI</li></ul></div><div class="small-note">HCLTech · Enterprise Knowledge Assistant · v0.1.0</div></div>',unsafe_allow_html=True)
-    st.markdown('<div class="panel"><h3>Use case</h3><p style="font-size:12px">MPC Midstream support teams bring incidents, Outlook communication, Teams collaboration, and meetings into one operational view.</p><div style="font-size:12px;font-weight:700;margin:14px 0">Application flow</div>'+_flow_html()+'</div>',unsafe_allow_html=True)
-    records=service.storage.load_all(); alerts=critical_incidents(records); meetings=[r for r in records if r.record_type=="calendar"]
-    values=[("Knowledge records",len(records)),("Connected sources",len({r.source for r in records})),("Critical incidents",len(alerts)),("Meetings",len(meetings)),("Operating mode",settings.app_mode.title())]
-    for col,(label,value) in zip(st.columns(5),values): col.metric(label,value)
-    ask_tab,meetings_tab,records_tab,notifications_tab,powerbi_tab=st.tabs(["Ask Assistant","Meeting schedule","Knowledge records","Notifications","Power BI data"])
-    with ask_tab:
-        st.subheader("Ask across enterprise systems")
-        caller_groups=st.multiselect("Access groups",["employees","engineering","hr","leadership"],["employees","engineering"])
-        question=st.text_area("Question","Summarize the most critical incident, including impact, owner, cause, workaround, and SLA risk.")
-        if st.button("Generate grounded answer",type="primary",disabled=not question):
-            answer,citations=service.ask(question,caller_groups); st.markdown("#### Grounded answer"); st.write(answer)
-            with st.expander(f"Sources ({len(citations)})",expanded=True):
-                for record in citations: st.markdown(f"- `{record.id[:12]}` **{record.source}** — {record.title}")
-    with meetings_tab:
-        st.subheader("Meeting schedule")
-        if meetings: st.dataframe([{"Title":r.title,"Owner":r.owner,"Start":r.metadata.get("start",""),"Status":r.status} for r in meetings],width="stretch",hide_index=True)
-        else: st.info("No meetings indexed. Collect data or configure Outlook Desktop.")
-    with records_tab:
-        st.subheader("Normalized knowledge records"); source=st.selectbox("Filter source",["All"]+sorted({r.source for r in records})); shown=records if source=="All" else [r for r in records if r.source==source]
-        st.dataframe([{"Source":r.source,"Type":r.record_type,"Title":r.title,"Status":r.status,"Priority":r.priority,"Owner":r.owner,"Groups":", ".join(r.allowed_groups)} for r in shown],width="stretch",hide_index=True)
-    with notifications_tab:
-        st.subheader("Critical incident notifications"); st.dataframe([{"Incident":r.source_id,"Title":r.title,"Priority":r.priority,"SLA hours":r.metadata.get("sla_hours"),"Owner":r.owner} for r in alerts],width="stretch",hide_index=True)
-        if st.button("Create local notification",disabled=not alerts): st.success(f"Notification created: {notify_local(alerts,settings.data_dir)}")
-    with powerbi_tab:
-        st.subheader("Power BI operational export"); output=Path(settings.data_dir)/"powerbi"/"operations.csv"
-        if st.button("Build Power BI CSV"): export_powerbi(records,output)
-        if output.exists(): st.download_button("Download operations.csv",output.read_bytes(),"operations.csv","text/csv")
+def ensure_records(service: KnowledgeAssistant):
+    if "records" not in st.session_state:
+        result = service.ingest()
+        st.session_state.records = list(result.records)
+        st.session_state.ingestion = result
+    outlook_state_key = f"{OUTLOOK_MAILBOX}:{OUTLOOK_DATA_VERSION}"
+    if (
+        OUTLOOK_MAILBOX
+        and st.session_state.get("outlook_loaded_mailbox") != outlook_state_key
+    ):
+        records = [
+            record
+            for record in st.session_state.records
+            if record.record_type not in {"meeting_invite", "calendar_event"}
+        ]
+        try:
+            outlook_records = OutlookDesktopConnector(
+                OUTLOOK_MAILBOX,
+                days_past=service.settings.calendar_days_past,
+                days_future=service.settings.calendar_days_future,
+            ).collect()
+            records_by_id = {record.id: record for record in records + outlook_records}
+            records = list(records_by_id.values())
+            result = service.ingest_records(records)
+            st.session_state.outlook_status = (
+                f"Loaded {len(outlook_records)} meetings from {OUTLOOK_MAILBOX}"
+            )
+            st.session_state.outlook_loaded_mailbox = outlook_state_key
+            st.session_state.ingestion = result
+        except Exception as exc:
+            st.session_state.outlook_status = f"Outlook calendar unavailable: {exc}"
+        st.session_state.records = records
+    return st.session_state.records
 
 
-if __name__=="__main__": render_app()
+service = create_service()
+
+brand_col, title_col = st.columns([1, 5], vertical_alignment="center")
+with brand_col:
+    st.image(str(HCLTECH_LOGO), width=170)
+with title_col:
+    st.title("Enterprise Knowledge Assistant")
+    st.caption("Outlook · Microsoft Teams · ServiceNow · Azure AI · Power BI")
+
+with st.container(border=True):
+    st.subheader("Project details")
+    st.markdown(
+        "This application collects approved information from **Outlook, Microsoft Teams, "
+        "and ServiceNow** and brings it into one searchable dashboard. It helps users:"
+    )
+    capability_col1, capability_col2 = st.columns(2)
+    capability_col1.markdown(
+        "- Ask questions and receive answers supported by source records\n"
+        "- View Outlook meetings and schedules\n"
+        "- Search and inspect normalized enterprise records"
+    )
+    capability_col2.markdown(
+        "- Identify critical incidents and SLA risks\n"
+        "- Create operational notifications\n"
+        "- Export analytics data for Power BI"
+    )
+    st.caption(
+        f"HCLTech · Enterprise Knowledge Assistant · v0.1.0 · "
+        f"{service.settings.app_mode.title()} environment"
+    )
+
+with st.sidebar:
+    st.header("Demo controls")
+    st.info(f"Mode: **{service.settings.app_mode.upper()}**")
+    if service.settings.app_mode == "local":
+        st.caption(
+            "Demo records with meetings read from the signed-in HCLTech Outlook profile."
+        )
+    if st.button("Collect and index data", type="primary", width="stretch"):
+        with st.spinner("Collecting, normalizing, storing, and indexing records..."):
+            result = service.ingest()
+            st.session_state.records = result.records
+            st.session_state.ingestion = result
+            st.session_state.pop("outlook_loaded_mailbox", None)
+        st.success(f"Processed {result.indexed} records")
+    st.divider()
+    st.subheader("Import incident data")
+    incident_upload = st.file_uploader("Incident workbook", type=["xlsx"])
+    incident_limit = st.selectbox("Incidents to import", options=[20, 30], index=0)
+    workbook_source = incident_upload or (
+        SAMPLE_INCIDENT_WORKBOOK if SAMPLE_INCIDENT_WORKBOOK.exists() else None
+    )
+    if SAMPLE_INCIDENT_WORKBOOK.exists() and incident_upload is None:
+        st.caption("Ready to import bundled incident.xlsx")
+    if st.button(
+        "Import Excel incidents", disabled=workbook_source is None, width="stretch"
+    ):
+        try:
+            with st.spinner("Reading, normalizing, and indexing incident records..."):
+                imported_records = ExcelIncidentConnector(workbook_source).collect()[
+                    :incident_limit
+                ]
+                result = service.ingest_records(imported_records)
+                current_records = list(st.session_state.get("records", []))
+                records_by_id = {
+                    record.id: record for record in current_records + imported_records
+                }
+                st.session_state.records = list(records_by_id.values())
+            st.success(f"Imported {result.indexed} incidents from Excel")
+        except Exception as exc:
+            st.error(f"Excel import failed: {exc}")
+    access_groups = st.text_input("Access groups", value="employees,engineering")
+    st.divider()
+    st.subheader("HCLTech Outlook")
+    outlook_mailbox = st.text_input("Mailbox", value=OUTLOOK_MAILBOX)
+    if "outlook_status" in st.session_state:
+        st.caption(st.session_state.outlook_status)
+    if st.button("Fetch Outlook meetings", width="stretch"):
+        try:
+            with st.spinner("Reading the signed-in Outlook calendar..."):
+                outlook_records = OutlookDesktopConnector(
+                    outlook_mailbox,
+                    days_past=service.settings.calendar_days_past,
+                    days_future=service.settings.calendar_days_future,
+                ).collect()
+                result = service.ingest_records(outlook_records)
+                current_records = [
+                    record
+                    for record in st.session_state.get("records", [])
+                    if record.record_type not in {"meeting_invite", "calendar_event"}
+                ]
+                records_by_id = {
+                    record.id: record for record in current_records + outlook_records
+                }
+                st.session_state.records = list(records_by_id.values())
+                st.session_state.outlook_loaded_mailbox = (
+                    f"{outlook_mailbox.lower()}:{OUTLOOK_DATA_VERSION}"
+                )
+            st.success(f"Fetched {result.indexed} Outlook meetings")
+        except Exception as exc:
+            st.error(f"Outlook calendar fetch failed: {exc}")
+
+try:
+    records = ensure_records(service)
+except Exception as exc:
+    st.error(f"Application initialization failed: {exc}")
+    st.stop()
+
+sources = {record.source for record in records}
+critical = {
+    record.metadata.get("incident_id", record.id)
+    for record in records
+    if record.priority.upper() == "P1"
+}
+meetings = [
+    record
+    for record in records
+    if record.record_type in {"meeting_invite", "calendar_event"}
+]
+
+with st.container(border=True):
+    st.subheader("Use case")
+    st.write(
+        "MPC Midstream support teams use this application to bring incidents, Outlook communication, "
+        "Teams collaboration, and meeting schedules into one operational view. Users can identify "
+        "critical issues, search normalized records, ask grounded questions, track meetings, create "
+        "notifications, and export data for Power BI reporting."
+    )
+
+    st.markdown("**Application flow**")
+    st.image(str(APPLICATION_FLOW), width="stretch")
+
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric(
+    "Knowledge records",
+    len(records),
+    help="Total normalized and searchable records collected from all configured sources.",
+)
+col2.metric(
+    "Connected sources",
+    len(sources),
+    help="Number of enterprise source systems currently represented in the dashboard.",
+)
+col3.metric(
+    "Critical incidents",
+    len(critical),
+    help="Unique incidents classified as priority P1 and requiring immediate attention.",
+)
+col4.metric(
+    "Meetings",
+    len(meetings),
+    help="Outlook calendar events and Microsoft Teams meeting invitations available for review.",
+)
+col5.metric(
+    "Operating mode",
+    service.settings.app_mode.title(),
+    help="Local uses safe demo data; Azure connects to configured enterprise services.",
+)
+
+ask_tab, meetings_tab, records_tab, alerts_tab, analytics_tab = st.tabs(
+    [
+        "Ask Assistant",
+        "Meeting schedule",
+        "Knowledge records",
+        "Notifications",
+        "Power BI data",
+    ]
+)
+
+with ask_tab:
+    st.subheader("Ask across enterprise systems")
+    question = st.text_area(
+        "Question",
+        value="Summarize DEMO-INC-1001, including impact, owner, cause, workaround, and SLA risk.",
+        height=100,
+    )
+    if st.button(
+        "Generate grounded answer", type="primary", disabled=not question.strip()
+    ):
+        with st.spinner("Searching accessible records..."):
+            answer = service.ask(
+                question.strip(),
+                [group.strip() for group in access_groups.split(",") if group.strip()],
+            )
+        st.markdown(answer.text)
+        if answer.citations:
+            st.subheader("Sources")
+            for citation in answer.citations:
+                label = f"[{citation['number']}] {citation['source'].title()} — {citation['title']}"
+                if citation["url"]:
+                    st.markdown(f"- [{label}]({citation['url']})")
+                else:
+                    st.markdown(f"- {label}")
+
+with meetings_tab:
+    st.subheader("Outlook meeting invitations and schedule")
+    if meetings:
+        meeting_rows = [
+            {
+                "Start": meeting.metadata.get("meeting_start", ""),
+                "End": meeting.metadata.get("meeting_end", ""),
+                "Subject": meeting.title,
+                "Type": "Invitation"
+                if meeting.record_type == "meeting_invite"
+                else "Organized event",
+                "Response": meeting.metadata.get("response", meeting.status),
+                "Organizer": meeting.metadata.get("organizer", meeting.owner),
+                "Location": meeting.metadata.get("location", ""),
+                "Attendees": "; ".join(meeting.metadata.get("attendees", [])),
+                "Online": meeting.metadata.get("is_online_meeting", False),
+            }
+            for meeting in sorted(
+                meetings, key=lambda item: item.metadata.get("meeting_start", "")
+            )
+        ]
+        st.dataframe(pd.DataFrame(meeting_rows), width="stretch", hide_index=True)
+        meeting = st.selectbox(
+            "Meeting details", meetings, format_func=lambda item: item.title
+        )
+        start = meeting.metadata.get("meeting_start", "Not provided")
+        end = meeting.metadata.get("meeting_end", "Not provided")
+        st.write(
+            f"**Schedule:** {start} – {end} ({meeting.metadata.get('timezone', '')})"
+        )
+        st.write(f"**Organizer:** {meeting.metadata.get('organizer', meeting.owner)}")
+        st.write(f"**Location:** {meeting.metadata.get('location', 'Not provided')}")
+        attendees = meeting.metadata.get("attendees", [])
+        optional_attendees = meeting.metadata.get("optional_attendees", [])
+        st.write(
+            f"**Required attendees:** {'; '.join(attendees) if attendees else 'Not provided'}"
+        )
+        if optional_attendees:
+            st.write(f"**Optional attendees:** {'; '.join(optional_attendees)}")
+        if meeting.content:
+            with st.expander("Meeting notes"):
+                st.text(meeting.content)
+        if meeting.metadata.get("join_url"):
+            st.link_button("Join online meeting", meeting.metadata["join_url"])
+        if meeting.url:
+            st.link_button("Open in Outlook", meeting.url)
+    else:
+        st.info("No meetings were found in the configured calendar window.")
+
+with records_tab:
+    st.subheader("Normalized records")
+    source_filter = st.multiselect("Source", sorted(sources), default=sorted(sources))
+    rows = [
+        {
+            "Record ID": (
+                record.metadata.get("incident_id")
+                or record.metadata.get("request_id")
+                or record.source_id
+            ),
+            "Source": record.source,
+            "Type": record.record_type,
+            "Business Area": record.metadata.get(
+                "business_area", "Enterprise Operations"
+            ),
+            "Title": record.title,
+            "Status": record.status,
+            "Priority": record.priority,
+            "Owner": record.owner,
+            "Assignment Group": record.metadata.get("assignment_group", ""),
+            "SLA Remaining (hrs)": str(record.metadata.get("sla_hours_remaining", "")),
+            "Keywords": ", ".join(record.metadata.get("keywords", [])),
+            "Updated": record.updated_at,
+        }
+        for record in records
+        if record.source in source_filter
+    ]
+    records_dataframe = pd.DataFrame(rows)
+    if not records_dataframe.empty:
+        # PyArrow requires a column to have one stable type. Excel and demo
+        # records can supply SLA values as integers, blanks, or nulls.
+        records_dataframe["SLA Remaining (hrs)"] = (
+            records_dataframe["SLA Remaining (hrs)"].fillna("").astype("string")
+        )
+    st.dataframe(records_dataframe, width="stretch", hide_index=True)
+    selected = st.selectbox(
+        "Inspect JSON", records, format_func=lambda record: record.title
+    )
+    st.json(selected.to_dict())
+
+with alerts_tab:
+    st.subheader("Operational notifications")
+    teams_webhook_url = st.text_input(
+        "Teams Workflow webhook URL",
+        value=service.settings.teams_webhook_url,
+        type="password",
+        help="Kept only in this browser session; it is not saved to the repository.",
+    ).strip()
+    webhook_ready = bool(teams_webhook_url)
+    st.caption(
+        f"Teams Workflow webhook: {'Configured' if webhook_ready else 'Not configured'}"
+    )
+    if st.button("Post operational summary to Teams", disabled=not webhook_ready):
+        try:
+            service.post_teams_summary(records, teams_webhook_url)
+            st.success("Posted the operational summary to Microsoft Teams.")
+        except Exception as exc:
+            st.error(f"Teams summary failed: {exc}")
+    st.write(
+        "Evaluate critical priority and near-SLA-breach conditions. Duplicate source records are correlated into one alert."
+    )
+    channel = st.selectbox("Delivery channel", ["local", "email", "teams"])
+    if channel == "email":
+        st.warning("Email delivery requires configured Microsoft Graph credentials.")
+    elif channel == "teams":
+        st.warning(
+            "Teams delivery requires TEAMS_WEBHOOK_URL. Local mode writes safe outbox files."
+        )
+    if st.button("Evaluate and send notifications"):
+        try:
+            count = service.notify(
+                records, channel, teams_webhook_url=teams_webhook_url
+            )
+            st.success(f"Created {count} notification(s).")
+        except Exception as exc:
+            st.error(f"Notification failed: {exc}")
+    outbox = Path(service.settings.data_dir) / "outbox"
+    files = sorted(outbox.glob("*.json")) if outbox.exists() else []
+    if files:
+        st.caption("Local notification outbox")
+        for file in files:
+            payload = json.loads(file.read_text(encoding="utf-8"))
+            subject = (
+                payload.get("subject", file.name)
+                if isinstance(payload, dict)
+                else file.name
+            )
+            with st.expander(subject):
+                st.json(payload)
+
+with analytics_tab:
+    st.subheader("Power BI-ready operational data")
+    report_path = service.export(records)
+    dataframe = pd.read_csv(report_path)
+    left, right = st.columns(2)
+    with left:
+        st.write("Records by source")
+        st.bar_chart(dataframe["source"].value_counts())
+    with right:
+        st.write("Records by priority")
+        st.bar_chart(dataframe["priority"].fillna("Not set").value_counts())
+    st.dataframe(dataframe, width="stretch", hide_index=True)
+    st.download_button(
+        "Download Power BI CSV",
+        data=Path(report_path).read_bytes(),
+        file_name="operational_records.csv",
+        mime="text/csv",
+    )
