@@ -48,7 +48,7 @@ def _sidebar(settings: Settings, service: EnterpriseAssistant) -> None:
     st.sidebar.subheader("Demo controls")
     st.sidebar.info(f"Mode: **{settings.app_mode.upper()}**")
     st.sidebar.caption("Collect approved records from configured enterprise sources.")
-    if st.sidebar.button("Collect and index data", type="primary", use_container_width=True):
+    if st.sidebar.button("Collect and index data", type="primary", width="stretch"):
         with st.spinner("Collecting and normalizing records..."):
             count=len(service.ingest(include_demo=settings.app_mode=="local"))
         st.sidebar.success(f"Indexed {count} records"); st.rerun()
@@ -56,7 +56,7 @@ def _sidebar(settings: Settings, service: EnterpriseAssistant) -> None:
     upload=st.sidebar.file_uploader("Incident workbook",type=["xlsx"])
     limit=st.sidebar.selectbox("Incidents to import",[20,50,100])
     groups=st.sidebar.text_input("Access groups","employees,engineering")
-    if st.sidebar.button("Import Excel incidents",use_container_width=True,disabled=upload is None):
+    if st.sidebar.button("Import Excel incidents",width="stretch",disabled=upload is None):
         with tempfile.NamedTemporaryFile(suffix=".xlsx",delete=False) as handle:
             handle.write(upload.getbuffer()); temp_path=handle.name
         records=incidents_from_xlsx(temp_path)[:limit]; allowed=[x.strip() for x in groups.split(",") if x.strip()]
@@ -65,7 +65,7 @@ def _sidebar(settings: Settings, service: EnterpriseAssistant) -> None:
         st.sidebar.success(f"Imported {len(records)} incidents"); st.rerun()
     st.sidebar.divider(); st.sidebar.subheader("HCLTech Outlook"); st.sidebar.caption("Mailbox")
     st.sidebar.code(settings.outlook_desktop_mailbox or "Not configured",language=None)
-    if st.sidebar.button("Fetch Outlook meetings",use_container_width=True,disabled=not settings.outlook_desktop_mailbox):
+    if st.sidebar.button("Fetch Outlook meetings",width="stretch",disabled=not settings.outlook_desktop_mailbox):
         meetings=outlook_desktop_calendar(settings)
         for record in meetings: service.storage.upsert(record)
         service.search.upsert(meetings); st.sidebar.success(f"Fetched {len(meetings)} meetings"); st.rerun()
@@ -92,13 +92,13 @@ def render_app() -> None:
                 for record in citations: st.markdown(f"- `{record.id[:12]}` **{record.source}** — {record.title}")
     with meetings_tab:
         st.subheader("Meeting schedule")
-        if meetings: st.dataframe([{"Title":r.title,"Owner":r.owner,"Start":r.metadata.get("start",""),"Status":r.status} for r in meetings],use_container_width=True,hide_index=True)
+        if meetings: st.dataframe([{"Title":r.title,"Owner":r.owner,"Start":r.metadata.get("start",""),"Status":r.status} for r in meetings],width="stretch",hide_index=True)
         else: st.info("No meetings indexed. Collect data or configure Outlook Desktop.")
     with records_tab:
         st.subheader("Normalized knowledge records"); source=st.selectbox("Filter source",["All"]+sorted({r.source for r in records})); shown=records if source=="All" else [r for r in records if r.source==source]
-        st.dataframe([{"Source":r.source,"Type":r.record_type,"Title":r.title,"Status":r.status,"Priority":r.priority,"Owner":r.owner,"Groups":", ".join(r.allowed_groups)} for r in shown],use_container_width=True,hide_index=True)
+        st.dataframe([{"Source":r.source,"Type":r.record_type,"Title":r.title,"Status":r.status,"Priority":r.priority,"Owner":r.owner,"Groups":", ".join(r.allowed_groups)} for r in shown],width="stretch",hide_index=True)
     with notifications_tab:
-        st.subheader("Critical incident notifications"); st.dataframe([{"Incident":r.source_id,"Title":r.title,"Priority":r.priority,"SLA hours":r.metadata.get("sla_hours"),"Owner":r.owner} for r in alerts],use_container_width=True,hide_index=True)
+        st.subheader("Critical incident notifications"); st.dataframe([{"Incident":r.source_id,"Title":r.title,"Priority":r.priority,"SLA hours":r.metadata.get("sla_hours"),"Owner":r.owner} for r in alerts],width="stretch",hide_index=True)
         if st.button("Create local notification",disabled=not alerts): st.success(f"Notification created: {notify_local(alerts,settings.data_dir)}")
     with powerbi_tab:
         st.subheader("Power BI operational export"); output=Path(settings.data_dir)/"powerbi"/"operations.csv"
