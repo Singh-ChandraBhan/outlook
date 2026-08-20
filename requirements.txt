@@ -1,3 +1,6 @@
+# Install the application package from the repository (required by Streamlit Cloud)
+-e .
+
 # Runtime and HTTP/TLS
 requests>=2.32
 truststore>=0.9
